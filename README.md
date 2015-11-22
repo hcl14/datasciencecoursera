@@ -3,7 +3,7 @@
 To view the html file you can use rawgit link:
 
 
-[https://cdn.rawgit.com/hcl14/datasciencecoursera/master/randomforesmodel.html](https://cdn.rawgit.com/hcl14/datasciencecoursera/master/randomforesmodel.html)
+[https://cdn.rawgit.com/hcl14/datasciencecoursera/master/randomforesmodel_out.html](https://cdn.rawgit.com/hcl14/datasciencecoursera/master/randomforesmodel_out.html)
 
 Here I have obtained an interesting result - although my model looks like an overfit, it clearly predicts on the test data which may point to either strong corellation or something strange about the data origin.
 
