@@ -36,7 +36,7 @@ pml.training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pm
 ##  $ amplitude_roll_dumbbell : num  NA NA NA NA NA NA NA NA NA NA ...
 ```
 
-The visible artifact is **"#DIV/0!"** which is an Excel error; also **cvtd_timestamp** variable is being read as factor which has no sense; it can be claimed obsolete as we have raw timestamps.
+The visible artifact is **"#DIV/0!"** which is an Excel error; also **cvtd_timestamp** variable(not listed here) is being read as factor which has no sense; it can be claimed obsolete as we have raw timestamps.
 
 
 Thus, we should perform input more carefully; Inspecting the file with editor also reveals that some values have quotes arond them and some - doesn't. My suggestion is
@@ -170,7 +170,7 @@ table(predict1, testing$classe)
 
 Now entering test data:
 ```{r}
-my_pml_testing <- read.csv("pml-testing.csv",na.strings=c("NA","NaN", " ","",'""','"#DIV/0!"','#DIV/0!'),dec="." )
+my_pml_testing <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",na.strings=c("NA","NaN", " ","",'""','"#DIV/0!"','#DIV/0!'),dec="." )
 
 ## converting logicals to numeric if there will be something left from the cleaning below
  l_columns<-which(sapply(my_pml_testing,class) %in% c("logical"))
@@ -206,3 +206,44 @@ pml_write_files(answers)
 ```
 
 **The following result was accepted by Coursera as correct.**
+
+
+
+Attemplt to estimate Out-of-Sample Error using K-fold cross-validation
+========================================
+
+As it was mentioned already, randomForest needs some time to be executed on this model. Also I have already noticed almost perfect fit on the model that could be claimed an overfit if the predictions on the test data were garbage. Here I perform a rough estimate of the our-of-smple error for the random forest algorithm, creating 10 folds, building a randomForest on each 9 of 10 and validating it on 10th. It takes some time to compute
+
+```{r}
+## K-fold cross validation to compute out-of-sample error
+## the default value for folds is 10
+## This consumes a lot of resources already
+
+folds <- createFolds(training2$classe)
+
+str(folds)
+
+split_up <- lapply(folds, function(ind, dat) dat[ind,], dat = training2)
+
+myerror<-0
+
+## here we do building randomForest of 9 of 10 datasets (rbinding them) and validating it on the 10th
+## notice that exclusion needs [-i] indexing
+for (i in 1:10) {
+  
+  cvmodel <- randomForest(classe~.,data=do.call(rbind, split_up[-i]),ncores=4)
+  cvmodeltest<-predict(cvmodel,split_up[[i]])
+  e1<-sum(cvmodeltest!=split_up[[i]]$classe)/length(split_up[[i]]$classe)  
+  myerror<-myerror+e1
+  
+  e1
+  predict(cvmodel,my_pml_testing2)
+}
+```
+The resulting error is small as expected
+```{r}
+myerror/10
+```
+
+
+As long as predictions are correct I claim it rather strong dependence between the variables than the overfit, that's my opininon.
