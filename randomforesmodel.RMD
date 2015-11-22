@@ -1,0 +1,208 @@
+---
+title: "Prediction Assignment Writeup for Practical Machine Learning course on Coursera "
+author: "hcl14"
+date: "22.11.2015"
+output: html_document
+---
+
+This is my analysis of the Weight Lifting Exercise Dataset provided by Coursera:
+
+training:
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+testing:
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>.
+
+
+Exploratory Analysis
+========================================
+The dataset consists from 160 variables and about ~20k observations, so ordinary visual check is not very helpful. Inputting the dataset and checking variable types reveals that some numeric variables were recognized as factors:
+
+
+```{r}
+pml.training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+```
+
+**str(pml.training)** gives us
+```{r}
+##  $ skewness_pitch_dumbbell : Factor w/ 402 levels "","-0.0053","0.0063",..: 1 1 1 1 1 1 1 1 1 1 ...
+##  $ skewness_yaw_dumbbell   : Factor w/ 2 levels "","#DIV/0!": 1 1 1 1 1 1 1 1 1 1 ...
+##  $ max_roll_dumbbell       : num  NA NA NA NA NA NA NA NA NA NA ...
+##  $ max_picth_dumbbell      : num  NA NA NA NA NA NA NA NA NA NA ...
+##  $ max_yaw_dumbbell        : Factor w/ 73 levels "","0.0","-0.1",..: 1 1 1 1 1 1 1 1 1 1 ...
+##  $ min_roll_dumbbell       : num  NA NA NA NA NA NA NA NA NA NA ...
+##  $ min_pitch_dumbbell      : num  NA NA NA NA NA NA NA NA NA NA ...
+##  $ min_yaw_dumbbell        : Factor w/ 73 levels "","0.0","-0.1",..: 1 1 1 1 1 1 1 1 1 1 ...
+##  $ amplitude_roll_dumbbell : num  NA NA NA NA NA NA NA NA NA NA ...
+```
+
+The visible artifact is **"#DIV/0!"** which is an Excel error; also **cvtd_timestamp** variable is being read as factor which has no sense; it can be claimed obsolete as we have raw timestamps.
+
+
+Thus, we should perform input more carefully; Inspecting the file with editor also reveals that some values have quotes arond them and some - doesn't. My suggestion is
+
+```{r}
+pml.training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",na.strings=c("NA","NaN", " ","",'""','"#DIV/0!"','#DIV/0!',dec="." ))
+```
+
+It's hard to tell anything else about such a big dataset. Each variable seems to have some meaning for the process we're investigating. But applying a basic model already reveals another problem with data. As long as trying to apply (any) model to the test set will reveal different data types in the both (training and testing) files, let's illustrate this now on the example of **rpart** model:
+
+
+Dividing to the training and testing dataset
+```{r}
+library(lattice); library(caret)
+pml.training1<-pml.training ## There will be one additional manipulation with data
+
+inTrain <- createDataPartition(y=pml.training1$classe, p=0.9, list=FALSE)
+training <- pml.training1[inTrain,]
+testing <- pml.training1[-inTrain,]
+```
+
+Let's reduce the number of our variables using **nearZeroVar**
+```{r}
+nsv<-nearZeroVar(training,saveMetrics=TRUE)
+sum(nsv$nzv)
+
+training2<-training[,!(nsv$nzv)]
+# training2 <- training2[,colSums(is.na(training2))<nrow(training2)] ## remove columns that consist from na's
+## But we actually don't have them
+
+tr2<-training2[complete.cases(training2),] ## Here I remove all rows that have NA's
+## I think there is enough data left for me, so I won't be using imputation on this step
+```
+
+Applying a very simple **rpart** model:
+
+**(The model is clearly overfitted because of the X variable, as long as the Classe variable is sorted in the dataset)**
+```{r}
+library(rpart)
+model1 <- rpart(classe~.,data=tr2,method="class")
+print(model1)
+
+predict1 <- predict(model1,tr2,type="class")
+table(predict1, tr2$classe)
+
+##Percent of correct predicitions
+sum(predict1==tr2$classe)/length(tr2$classe)
+```
+
+But let's forget it for a while, and continue trying to apply our model to the test data:
+
+```{r}
+my_pml_testing <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",na.strings=c("NA","NaN", " ","",'""','"#DIV/0!"','#DIV/0!'),dec="." )
+```
+
+Let's try prediction and we get an error:
+
+```{r, error = TRUE}
+predict2 <- predict(model1,my_pml_testing,type="class")
+```
+
+Checking types of the testing dataset reveals different types for these variables:
+
+```{r}
+##  $ skewness_pitch_dumbbell : logi  NA NA NA NA NA NA ...
+##  $ skewness_yaw_dumbbell   : logi  NA NA NA NA NA NA ...
+##  $ max_roll_dumbbell       : logi  NA NA NA NA NA NA ...
+##  $ max_picth_dumbbell      : logi  NA NA NA NA NA NA ...
+##  $ max_yaw_dumbbell        : logi  NA NA NA NA NA NA ...
+##  $ min_roll_dumbbell       : logi  NA NA NA NA NA NA ...
+##  $ min_pitch_dumbbell      : logi  NA NA NA NA NA NA ...
+##  $ min_yaw_dumbbell        : logi  NA NA NA NA NA NA ...
+##  $ amplitude_roll_dumbbell : logi  NA NA NA NA NA NA ...
+```
+
+These variables are claimed as logical as long as there is no values for them in the testing dataset. So I just copied the list of "problematic" variables, replaced the quotes by the correct ones and created a list of variables that shouldn't be included to the model.
+
+Now I will introduce the correct model that uses random forest and provides correct answers to the assignment.
+
+
+Random Forest model with obsolete variables excluded
+========================================
+```{r}
+set.seed(614)## Seed is actually valuable; For example, seed(123) produces bad results for me
+library(lattice); library(ggplot2); library(caret)
+pml.training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",na.strings=c("NA","NaN", " ","",'""','"#DIV/0!"','#DIV/0!',dec="." ))
+
+##Removing problem variables - they are usually NA in test set and read as logic 
+## + removing 'X' which immedeately causes overvfit as A's-E's are sorted in the set
+pml.training1<-pml.training[,-which(names(pml.training) %in% c('X','cvtd_timestamp','kurtosis_roll_belt', 'kurtosis_picth_belt', 'skewness_roll_belt', 'skewness_roll_belt.1', 'max_roll_belt', 'max_picth_belt', 'max_yaw_belt', 'min_roll_belt', 'min_pitch_belt', 'min_yaw_belt', 'amplitude_roll_belt', 'amplitude_pitch_belt', 'var_total_accel_belt', 'avg_roll_belt', 'stddev_roll_belt', 'var_roll_belt', 'avg_pitch_belt', 'stddev_pitch_belt', 'var_pitch_belt', 'avg_yaw_belt', 'stddev_yaw_belt', 'var_yaw_belt', 'var_accel_arm', 'kurtosis_roll_arm', 'kurtosis_picth_arm', 'kurtosis_yaw_arm', 'skewness_roll_arm', 'skewness_pitch_arm', 'skewness_yaw_arm', 'max_picth_arm', 'max_yaw_arm', 'min_roll_arm', 'min_yaw_arm', 'amplitude_yaw_arm', 'kurtosis_roll_dumbbell', 'kurtosis_picth_dumbbell', 'skewness_roll_dumbbell', 'skewness_pitch_dumbbell', 'max_roll_dumbbell', 'max_picth_dumbbell', 'max_yaw_dumbbell','min_roll_dumbbell', 'min_pitch_dumbbell', 'min_yaw_dumbbell', 'amplitude_roll_dumbbell', 'amplitude_pitch_dumbbell', 'var_accel_dumbbell', 'avg_roll_dumbbell', 'stddev_roll_dumbbell', 'var_roll_dumbbell', 'avg_pitch_dumbbell', 'stddev_pitch_dumbbell', 'var_pitch_dumbbell', 'avg_yaw_dumbbell', 'stddev_yaw_dumbbell', 'var_yaw_dumbbell', 'kurtosis_roll_forearm', 'kurtosis_picth_forearm', 'skewness_roll_forearm', 'skewness_pitch_forearm', 'max_picth_forearm', 'max_yaw_forearm', 'min_pitch_forearm', 'min_yaw_forearm', 'amplitude_roll_forearm', 'amplitude_pitch_forearm', 'var_accel_forearm'))]
+
+inTrain <- createDataPartition(y=pml.training1$classe, p=0.9, list=FALSE)
+training <- pml.training1[inTrain,]
+testing <- pml.training1[-inTrain,]
+
+##Let's reduce the number of our variables using **nearZeroVar**
+nsv<-nearZeroVar(training,saveMetrics=TRUE)
+sum(nsv$nzv)
+
+training2<-training[,!(nsv$nzv)]
+# training2 <- training2[,colSums(is.na(training2))<nrow(training2)] ## remove columns that consist from na's
+
+tr2<-training2[complete.cases(training2),]
+
+
+
+library(randomForest)
+model1 <- randomForest(classe~.,data=tr2,ncores=4) ## I have 4 cores, remove it or set another number in your program
+print(model1)
+
+## Training subset - we can see that prediction errors are very low, 
+## Almost all numbers are concentrated on the diagonal
+predict1 <- predict(model1,tr2)
+table(predict1, tr2$classe)
+
+##Percent of correct predicitions
+sum(predict1==tr2$classe)/length(tr2$classe)
+
+##Testing subset
+predict1 <- predict(model1,testing)
+table(predict1, testing$classe)
+
+
+```
+
+**RandomForest** took quite a lot of resources, but it's still much cheaper than **gbm**. Unfortunately, **rpart** didn't provide the fully correct answers even after all my ajustments (i.e. removing variables, manipulating with data subsets, imputation etc.).
+
+
+
+
+
+Now entering test data:
+```{r}
+my_pml_testing <- read.csv("pml-testing.csv",na.strings=c("NA","NaN", " ","",'""','"#DIV/0!"','#DIV/0!'),dec="." )
+
+## converting logicals to numeric if there will be something left from the cleaning below
+ l_columns<-which(sapply(my_pml_testing,class) %in% c("logical"))
+ my_pml_testing[,l_columns]<-sapply(my_pml_testing[,l_columns],as.numeric)
+
+my_pml_testing<-my_pml_testing[,-which(names(my_pml_testing) %in% c('X','cvtd_timestamp','kurtosis_roll_belt', 'kurtosis_picth_belt', 'skewness_roll_belt', 'skewness_roll_belt.1', 'max_roll_belt', 'max_picth_belt', 'max_yaw_belt', 'min_roll_belt', 'min_pitch_belt', 'min_yaw_belt', 'amplitude_roll_belt', 'amplitude_pitch_belt', 'var_total_accel_belt', 'avg_roll_belt', 'stddev_roll_belt', 'var_roll_belt', 'avg_pitch_belt', 'stddev_pitch_belt', 'var_pitch_belt', 'avg_yaw_belt', 'stddev_yaw_belt', 'var_yaw_belt', 'var_accel_arm', 'kurtosis_roll_arm', 'kurtosis_picth_arm', 'kurtosis_yaw_arm', 'skewness_roll_arm', 'skewness_pitch_arm', 'skewness_yaw_arm', 'max_picth_arm', 'max_yaw_arm', 'min_roll_arm', 'min_yaw_arm', 'amplitude_yaw_arm', 'kurtosis_roll_dumbbell', 'kurtosis_picth_dumbbell', 'skewness_roll_dumbbell', 'skewness_pitch_dumbbell', 'max_roll_dumbbell', 'max_picth_dumbbell', 'max_yaw_dumbbell','min_roll_dumbbell', 'min_pitch_dumbbell', 'min_yaw_dumbbell', 'amplitude_roll_dumbbell', 'amplitude_pitch_dumbbell', 'var_accel_dumbbell', 'avg_roll_dumbbell', 'stddev_roll_dumbbell', 'var_roll_dumbbell', 'avg_pitch_dumbbell', 'stddev_pitch_dumbbell', 'var_pitch_dumbbell', 'avg_yaw_dumbbell', 'stddev_yaw_dumbbell', 'var_yaw_dumbbell', 'kurtosis_roll_forearm', 'kurtosis_picth_forearm', 'skewness_roll_forearm', 'skewness_pitch_forearm', 'max_picth_forearm', 'max_yaw_forearm', 'min_pitch_forearm', 'min_yaw_forearm', 'amplitude_roll_forearm', 'amplitude_pitch_forearm', 'var_accel_forearm'))]
+
+## Removing other obsolete variables to avoid another type mismatch errors
+my_pml_testing2<-my_pml_testing[,!(nsv$nzv)]
+
+## We do not even need an imputation - it says everything is fine now
+#my_pml_testing2<-knnImputation(my_pml_testing2[,-length(my_pml_testing2)],k=10,distData=tr2[,-length(tr2)])
+
+
+predict2 <- predict(model1,my_pml_testing2)
+predict2
+
+## Bingo!
+```
+
+
+Moving to files:
+```{r}
+answers <- as.character(predict2)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:20){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
+
+**The following result was accepted by Coursera as correct.**
