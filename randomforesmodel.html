@@ -84,7 +84,7 @@ img {
 ##  $ min_pitch_dumbbell      : num  NA NA NA NA NA NA NA NA NA NA ...
 ##  $ min_yaw_dumbbell        : Factor w/ 73 levels &quot;&quot;,&quot;0.0&quot;,&quot;-0.1&quot;,..: 1 1 1 1 1 1 1 1 1 1 ...
 ##  $ amplitude_roll_dumbbell : num  NA NA NA NA NA NA NA NA NA NA ...</code></pre>
-<p>The visible artifact is <strong>“#DIV/0!”</strong> which is an Excel error; also <strong>cvtd_timestamp</strong> variable is being read as factor which has no sense; it can be claimed obsolete as we have raw timestamps.</p>
+<p>The visible artifact is <strong>“#DIV/0!”</strong> which is an Excel error; also <strong>cvtd_timestamp</strong> variable(not listed here) is being read as factor which has no sense; it can be claimed obsolete as we have raw timestamps.</p>
 <p>Thus, we should perform input more carefully; Inspecting the file with editor also reveals that some values have quotes arond them and some - doesn’t. My suggestion is</p>
 <pre class="r"><code>pml.training &lt;- read.csv(&quot;https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv&quot;,na.strings=c(&quot;NA&quot;,&quot;NaN&quot;, &quot; &quot;,&quot;&quot;,'&quot;&quot;','&quot;#DIV/0!&quot;','#DIV/0!',dec=&quot;.&quot; ))</code></pre>
 <p>It’s hard to tell anything else about such a big dataset. Each variable seems to have some meaning for the process we’re investigating. But applying a basic model already reveals another problem with data. As long as trying to apply (any) model to the test set will reveal different data types in the both (training and testing) files, let’s illustrate this now on the example of <strong>rpart</strong> model:</p>
@@ -226,7 +226,7 @@ table(predict1, testing$classe)</code></pre>
 ##        E   0   0   0   0 360</code></pre>
 <p><strong>RandomForest</strong> took quite a lot of resources, but it’s still much cheaper than <strong>gbm</strong>. Unfortunately, <strong>rpart</strong> didn’t provide the fully correct answers even after all my ajustments (i.e. removing variables, manipulating with data subsets, imputation etc.).</p>
 <p>Now entering test data:</p>
-<pre class="r"><code>my_pml_testing &lt;- read.csv(&quot;pml-testing.csv&quot;,na.strings=c(&quot;NA&quot;,&quot;NaN&quot;, &quot; &quot;,&quot;&quot;,'&quot;&quot;','&quot;#DIV/0!&quot;','#DIV/0!'),dec=&quot;.&quot; )
+<pre class="r"><code>my_pml_testing &lt;- read.csv(&quot;https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv&quot;,na.strings=c(&quot;NA&quot;,&quot;NaN&quot;, &quot; &quot;,&quot;&quot;,'&quot;&quot;','&quot;#DIV/0!&quot;','#DIV/0!'),dec=&quot;.&quot; )
 
 ## converting logicals to numeric if there will be something left from the cleaning below
  l_columns&lt;-which(sapply(my_pml_testing,class) %in% c(&quot;logical&quot;))
@@ -258,6 +258,48 @@ pml_write_files = function(x){
 }
 pml_write_files(answers)</code></pre>
 <p><strong>The following result was accepted by Coursera as correct.</strong></p>
+</div>
+<div id="attemplt-to-estimate-out-of-sample-error-using-k-fold-cross-validation" class="section level1">
+<h1>Attemplt to estimate Out-of-Sample Error using K-fold cross-validation</h1>
+<p>As it was mentioned already, randomForest needs some time to be executed on this model. Also I have already noticed almost perfect fit on the model that could be claimed an overfit if the predictions on the test data were garbage. Here I perform a rough estimate of the our-of-smple error for the random forest algorithm, creating 10 folds, building a randomForest on each 9 of 10 and validating it on 10th. It takes some time to compute</p>
+<pre class="r"><code>## K-fold cross validation to compute out-of-sample error
+## the default value for folds is 10
+## This consumes a lot of resources already
+
+folds &lt;- createFolds(training2$classe)
+
+str(folds)</code></pre>
+<pre><code>## List of 10
+##  $ Fold01: int [1:1766] 9 10 11 12 19 20 32 56 58 64 ...
+##  $ Fold02: int [1:1766] 2 7 13 21 45 46 50 57 60 63 ...
+##  $ Fold03: int [1:1765] 3 22 39 47 62 74 85 91 106 114 ...
+##  $ Fold04: int [1:1767] 14 17 28 29 33 38 42 49 51 55 ...
+##  $ Fold05: int [1:1765] 25 26 34 35 43 52 73 75 76 92 ...
+##  $ Fold06: int [1:1768] 8 59 66 94 98 101 126 130 138 141 ...
+##  $ Fold07: int [1:1765] 1 6 15 30 37 44 54 61 65 68 ...
+##  $ Fold08: int [1:1767] 4 24 67 78 80 87 102 112 116 127 ...
+##  $ Fold09: int [1:1767] 5 16 18 23 36 40 41 48 69 70 ...
+##  $ Fold10: int [1:1766] 27 31 53 83 84 124 147 151 162 166 ...</code></pre>
+<pre class="r"><code>split_up &lt;- lapply(folds, function(ind, dat) dat[ind,], dat = training2)
+
+myerror&lt;-0
+
+## here we do building randomForest of 9 of 10 datasets (rbinding them) and validating it on the 10th
+## notice that exclusion needs [-i] indexing
+for (i in 1:10) {
+  
+  cvmodel &lt;- randomForest(classe~.,data=do.call(rbind, split_up[-i]),ncores=4)
+  cvmodeltest&lt;-predict(cvmodel,split_up[[i]])
+  e1&lt;-sum(cvmodeltest!=split_up[[i]]$classe)/length(split_up[[i]]$classe)  
+  myerror&lt;-myerror+e1
+  
+  e1
+  predict(cvmodel,my_pml_testing2)
+}</code></pre>
+<p>The resulting error is small as expected</p>
+<pre class="r"><code>myerror/10</code></pre>
+<pre><code>## [1] 0.0009626276</code></pre>
+<p>As long as predictions are correct I claim it rather strong dependence between the variables than the overfit, that’s my opininon.</p>
 </div>
 
 
